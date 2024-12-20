@@ -22,7 +22,6 @@ with gr.Blocks() as demo:
     with gr.Row():
         query_input = gr.Textbox(label="Enter your SQL query")
         submit_button = gr.Button("Submit")
-
     output_text = gr.Textbox(label="SQL Query")
     output_table = gr.Dataframe()
 

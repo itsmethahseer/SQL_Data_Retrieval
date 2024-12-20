@@ -8,9 +8,8 @@ from psycopg2.extras import RealDictCursor
 import google.generativeai as genai
 from google.generativeai import GenerationConfig, GenerativeModel
 from dotenv import load_dotenv
-import os
-load_dotenv(".env",override=True)
 
+load_dotenv(".env", override=True)
 
 # Initialize FastAPI app
 app = FastAPI()
@@ -28,6 +27,16 @@ DB_CONFIG = {
 class QueryRequest(BaseModel):
     query: str
 
+def get_table_names(db_config):
+    conn = psycopg2.connect(**db_config)
+    cur = conn.cursor()
+    cur.execute("SELECT table_name FROM information_schema.tables WHERE table_schema = 'public'")
+    table_names = cur.fetchall()
+    conn.close()
+    return [table[0] for table in table_names]
+
+table_names = get_table_names(DB_CONFIG)
+
 # Function to execute SQL queries
 def execute_query(query):
     try:
@@ -41,12 +50,10 @@ def execute_query(query):
         return str(e)
 
 # Function to generate SQL query using Gemini API
-def extract_invoice_details(base64_data, prompt):
+def generate_sql_query(user_query, table_names):
     try:
-        logging.info("Gemini API call starting")
-
         # Configure Gemini API
-        genai.configure(api_key=os.getenv('API_KEY'))  # Ensure API_KEY is set in the environment
+        genai.configure(api_key=os.getenv('API_KEY'))
 
         # Prepare generation configuration
         generation_config = GenerationConfig(
@@ -56,31 +63,50 @@ def extract_invoice_details(base64_data, prompt):
             top_p=0.01,
         )
 
-        system_instruction = (
-            """You are a skilled SQL Query Expert. Analyze the database schema and user query, 
-            and generate an optimized SQL query to retrieve the requested data.
-            in the following format {"optimized_query":"string""}"""
-        
-        )
+        table_names_str = ", ".join(table_names)  # Convert list to a comma-separated string
 
+        prompt = f"""
+        You are a skilled SQL Query Expert. Analyze the database schema and user query, 
+        and generate an optimized SQL query to retrieve the requested data.
+
+        User Query: {user_query}
+
+        You have access to the following tables: {table_names_str}.
+        You can find the keywords in the user query to match with one of the tables.
+
+        You may find multiple tables in the schema. You need to search accurately to check whether any table matches the name or context in the user query.
+
+        ### Example:
+        - User Query: `please give me the top 3 person's age`
+        Then "person" will be a table in the schema and "age" will be a column. 
+        Generate the query like: `SELECT Age FROM person LIMIT 3;`.
+
+        **Important Note:**
+        Always include a delimiter (e.g., semicolon) at the end of the SQL query. If it is missing, the query cannot be executed.
+
+        Please return the output in the following JSON format:
+        {{"optimized_query": "string"}}
+        """
+
+        print(prompt)
         # Initialize the Gemini model
         model = GenerativeModel(
             model_name='gemini-1.5-pro',
-            generation_config=generation_config,
-            system_instruction=system_instruction,
-        )
+            generation_config=generation_config)
 
         # Perform the Gemini API call
-        response = model.generate_content([system_instruction, {"mime_type": "text/plain", "data": base64_data}, prompt])
-        logging.info("Response successfully returned from Gemini")
+        response = model.generate_content(prompt)
+        logging.info("Response received from Gemini")
+
+        # Print the raw response (for debugging)
+        logging.debug(f"Raw response: {response.text}")
 
         # Extract and return the text response
         response_json = json.loads(response.text)
-        print(response_json)
         sql_query = response_json.get("optimized_query")
 
         if not sql_query:
-            raise ValueError("Gemini API did not generate a valid SQL query.")
+            raise ValueError("LLM API did not generate a valid SQL query.")
 
         return sql_query
     except Exception as e:
@@ -91,15 +117,13 @@ def extract_invoice_details(base64_data, prompt):
 @app.post("/query")
 async def handle_query(request: QueryRequest):
     user_query = request.query
-    base64_schema = "SGVsbG8gdGhpcyBpcyBhIHNjaGVtYSBwbGFjZWhvbGRlci4="
 
     # Step 1: Generate SQL query using Gemini API
-    sql_query = extract_invoice_details(base64_schema, user_query)
-    print(sql_query)
+    sql_query = generate_sql_query(user_query,table_names)
 
     # Step 2: Execute the SQL query
     results = execute_query(sql_query)
-
+    print("results",results)
     if isinstance(results, str):  # If an error occurred
         raise HTTPException(status_code=500, detail=results)
 

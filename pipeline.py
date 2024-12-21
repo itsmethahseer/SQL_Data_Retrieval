@@ -83,6 +83,7 @@ def generate_sql_query(user_query, table_names):
 
         **Important Note:**
         Always include a delimiter (e.g., semicolon) at the end of the SQL query. If it is missing, the query cannot be executed.
+        **Important Note:** If you do not find any query related table and column , or if you can not generate the proper SQL query just say " I don't know the answer , please try again".
 
         Please return the output in the following JSON format:
         {{"optimized_query": "string"}}
@@ -106,7 +107,7 @@ def generate_sql_query(user_query, table_names):
         sql_query = response_json.get("optimized_query")
 
         if not sql_query:
-            raise ValueError("LLM API did not generate a valid SQL query.")
+            raise ValueError("LLM API did not generated a valid SQL query.")
 
         return sql_query
     except Exception as e:
@@ -116,16 +117,19 @@ def generate_sql_query(user_query, table_names):
 # FastAPI route to handle queries
 @app.post("/query")
 async def handle_query(request: QueryRequest):
-    user_query = request.query
+    try:
+        user_query = request.query
 
-    # Step 1: Generate SQL query using Gemini API
-    sql_query = generate_sql_query(user_query,table_names)
+        # Step 1: Generate SQL query using Gemini API
+        sql_query = generate_sql_query(user_query,table_names)
 
-    # Step 2: Execute the SQL query
-    results = execute_query(sql_query)
-    print("results",results)
-    if isinstance(results, str):  # If an error occurred
-        raise HTTPException(status_code=500, detail=results)
+        # Step 2: Execute the SQL query
+        results = execute_query(sql_query)
+        print("results",results)
+        if isinstance(results, str):  # If an error occurred
+            raise HTTPException(status_code=500, detail=results)
 
-    # Step 3: Return results
-    return {"query": sql_query, "results": results}
+        # Step 3: Return results
+        return {"query": sql_query, "results": results}
+    except:
+        return {"detail": "Request query not found in the database"}
